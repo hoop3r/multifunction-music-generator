@@ -17,14 +17,14 @@ if __name__ == '__main__':
 	print('')
 	print('')
 	# lets generate a population of individuals
-	beats_per_second = float(input('how many beats per second?'))
-	no_of_beats = int(input('how many beats?'))
-	individuals_ini = int(input('how many individuals in intial population?'))
+	beats_per_second = float(input('how many beats per second? '))
+	no_of_beats = int(input('how many beats? '))
+	individuals_ini = int(input('how many individuals in intial population? '))
 	print('')
 
 	#setting algo parameters
 	min_Np = 200/individuals_ini#to ensure atleast two indivuals selected for next generation
-	Np = float(input('enter Np value, should be greater than or equal to  {:.2f} :'.format(min_Np)))
+	Np = float(input('enter Np value, should be greater than or equal to  {:.2f} : '.format(min_Np)))
 	number_of_generations = int(input('no of successive generations to run for? '))
 	#lets play out each indvidual and see its encoded genome
 	running = True
