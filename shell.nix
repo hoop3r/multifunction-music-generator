@@ -17,6 +17,7 @@ let
     wheel
     pyoPkg
     sounddevice
+    midiutil
   ]);
 
   liblo28 = stdenv.mkDerivation rec {
