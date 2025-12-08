@@ -1,11 +1,13 @@
 import random
 from typing import List, Tuple, Optional, Union
 
+import numpy as np
+
 # Genetic algorithm hyperparameters
 POPULATION_SIZE = 100
 MAX_GENERATIONS = 100
 MUTATION_RATE = 0.05
-MAX_FITNESS = 50000
+MAX_FITNESS = 16000
 
 # Lead loop size (bars × steps per bar)
 LOOP_BARS = 2
@@ -195,9 +197,24 @@ def runEvolution(
             ratings_map.update(initial_ratings_map)
         # Ask for user ratings only every 5 generations
         if user_rating_callback is not None and user_sample_count > 0 and gen % 5 == 0:
-            print(f"\n[Generation {gen}] Time to rate some individuals:")
+            # Print generation and current best fitness
+            gid, notes = max(population, key=lambda g: compute_fitness(g[1], human_bonus_map.get(g[0], 0.0)))
+            best_fitness = compute_fitness(notes, human_bonus_map.get(gid, 0.0))
+            print(f"[Generation {gen}] Current max fitness: {best_fitness:.2f}")
+
             sample_count = min(user_sample_count, len(population))
             sampled_indices = rng.sample(range(len(population)), sample_count)
+
+            # Ensure top 10% individual is included
+            top_10_percent = int(0.1 * len(population))
+            top_indices = np.argsort([compute_fitness(g[1], human_bonus_map.get(g[0], 0.0)) for g in population])[::-1][
+                          :top_10_percent]
+
+            # Pick one from top_indices to guarantee inclusion
+            top_idx = rng.choice(top_indices)
+            if top_idx not in sampled_indices:
+                sampled_indices[0] = top_idx  # Replace the first sampled index
+
             for idx in sampled_indices:
                 try:
                     gid, notes = population[idx]
