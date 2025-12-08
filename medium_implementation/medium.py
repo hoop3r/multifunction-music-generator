@@ -95,14 +95,12 @@ def main():
         playback_tempo=tempo,
         playback_rng=test_rng,
     )
-
-    # Play the top result using pyo GUI. If playback fails, fall back to writing MIDI files
+    # Play the top result using pyo GUI
     try:
-        play_sequence_pyo(res[0], tempo, rng=test_rng, use_pyo_gui=True)
+        top_entry = res[0]
+        play_sequence_pyo(top_entry[1], tempo, rng=test_rng, use_pyo_gui=True)
     except Exception as e:
-        error(f"pyo playback failed; falling back to MIDI output. {e}")
-        for i in range(min(len(res), 3)):
-            writeMidiToDisk(res[i], f"./out{i}.mid", tempo)
+        error(f"pyo playback failed. {e}")
 
 
 def buildScale(root, key):
