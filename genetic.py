@@ -27,9 +27,6 @@ def selection(population,Np):
 	for i in range(0,no_of_pairs,2):
 		mating_pool.append( [ top_Np[top_Np.index[i]],top_Np[top_Np.index[i+1]] ] )
 
-
-	
-	
 	return mating_pool
 	
 def crossover(mating_pool):
@@ -81,8 +78,6 @@ def crossover(mating_pool):
 
 		#print('new offspring1: ',offspring1)
 		#print('new offspring2: ',offspring2)
-
-
 
 
 if __name__ == '__main__':
