@@ -1,24 +1,12 @@
 # synthesizer and playback utilities for the music GA
-"""synthesizer and playback utilities for the music GA
-
-This module provides a small pyo-backed player (when pyo is installed) and a
-CLI rating helper used by the genetic driver. The code is defensive so tests
-or CI environments without pyo can still import and run non-audio parts.
-"""
-
 
 import numpy as np
+import time as _time
 from typing import Optional, Tuple
-
-try:
-    from pyo import Server, Adsr, SuperSaw, ButHP, Pattern
-    HAVE_PYO = True
-except Exception:
-    HAVE_PYO = False
-
+from pyo import *
 from medium_genetic import flatten
 from medium_logging import dbg
-
+import os
 
 
 def midi_to_freq(midi_note: int) -> float:
@@ -42,10 +30,6 @@ def play_sequence_pyo(sequence, tempo: int = 60, rng: np.random.Generator = None
     intervals = rng.choice([0.25, 0.5, 1], size=len(flat)).tolist()
 
     beat = 60.0 / float(tempo)
-
-    if not HAVE_PYO:
-        dbg("pyo not available: skipping audio playback (falling back to MIDI/file-only behavior)")
-        return None
 
     s = Server(sr=48000, duplex=0).boot()
 
@@ -98,14 +82,18 @@ def play_sequence_pyo(sequence, tempo: int = 60, rng: np.random.Generator = None
         except Exception:
             pass
         return None
-    # Non-GUI mode: return server and pattern so caller can stop playback.
     return s, pat
 
 
 def rate_sequence_cli(sequence, tempo: int = 60, rng: np.random.Generator = None) -> Optional[int]:
-    """Play sequence without GUI, let the user stop via Enter, then prompt for a 0-5 rating.
-       Returns an int 0-5 or None if skipped.
     """
+    Play sequence without GUI, record while playing, let the user stop via Enter,
+    then prompt for a 0-6 rating. If rating == 6, move the temp file to a saved super-like.
+    """
+    if rng is None:
+        rng = np.random.default_rng()
+
+    # Start playback
     try:
         s_pat = play_sequence_pyo(sequence, tempo=tempo, rng=rng, use_pyo_gui=False)
         if not s_pat:
@@ -115,42 +103,160 @@ def rate_sequence_cli(sequence, tempo: int = 60, rng: np.random.Generator = None
         dbg(f"[LEAD] playback failed: {e}")
         return None
 
-    print("Playing sequence. Press Enter to stop playback and rate (blank to skip).")
+    # Start recording immediately
+    temp_fname = f"_temp_recording_{int(_time.time())}.wav"
+
+    try:
+        if hasattr(s, "recordOptions"):
+            try:
+                s.recordOptions(filename=temp_fname)
+            except TypeError:
+                s.recordOptions(temp_fname)
+    except Exception as e:
+        dbg(f"rate_sequence_cli: recordOptions failed: {e}")
+
+    try:
+        if hasattr(s, "recstart"):
+            s.recstart()
+        elif hasattr(s, "recStart"):
+            s.recStart()
+    except Exception as e:
+        dbg(f"rate_sequence_cli: failed to start recording: {e}")
+
+    print("Playing sequence (recording). Press Enter to stop and rate:")
+
+    # Wait for user to hit Enter     
     try:
         input()
     except EOFError:
-        # Non-interactive
         try:
             pat.stop()
-            s.stop()
+        except Exception:
+            pass
+        try:
+            if hasattr(s, "recstop"):
+                s.recstop()
+            elif hasattr(s, "recStop"):
+                s.recStop()
         except Exception:
             pass
         return None
 
+    # Stop playback and recording
     try:
         pat.stop()
     except Exception:
         pass
+
     try:
-        s.stop()
+        if hasattr(s, "recstop"):
+            s.recstop()
+        elif hasattr(s, "recStop"):
+            s.recStop()
+    except Exception as e:
+        dbg(f"rate_sequence_cli: failed to stop recording cleanly: {e}")
+
+    # Ask user for rating. If the response is anything but 6, discard the temp file.
+    try:
+        resp = input("Rate 0-6 (6 = Super like, blank to skip): ").strip()
+    except EOFError:
+        resp = ""
+
+    # Blank input → delete temp and return None
+    if resp == "":
+        if os.path.exists(temp_fname):
+            os.remove(temp_fname)
+        return None
+
+    # 6 → super-like: finalize temp file
+    if resp == "6":
+        final_fname = f"superlike_{int(_time.time())}.wav"
+        try:
+            os.rename(temp_fname, final_fname)
+            print(f"Saved super-like WAV to {final_fname}")
+        except Exception as e:
+            print(f"Failed to finalize WAV: {e}")
+        return 6
+
+    # Any other response → remove temp file
+    if os.path.exists(temp_fname):
+        try:
+            os.remove(temp_fname)
+        except Exception:
+            pass
+
+    try:
+        val = int(resp)
+        return val
+    except Exception:
+        return None
+
+
+
+def save_sequence_wav(sequence, tempo: int = 60, filename: Optional[str] = None, duration: float = 12.0, rng: np.random.Generator = None):
+    """
+    Save a sequence to WAV using pyo, by playing and recording in real time.
+    """
+    if filename is None:
+        filename = f"export_{int(_time.time())}.wav"
+    if rng is None:
+        rng = np.random.default_rng()
+
+    # Start playback
+    s_pat = play_sequence_pyo(sequence, tempo=tempo, rng=rng, use_pyo_gui=False)
+    if not s_pat:
+        raise RuntimeError("play_sequence_pyo failed; cannot record final sequence")
+
+    s, pat = s_pat
+
+    # Setup recorder
+    try:
+        if hasattr(s, "recordOptions"):
+            try:
+                s.recordOptions(filename=filename)
+            except TypeError:
+                s.recordOptions(filename)
+    except Exception as e:
+        dbg(f"save_sequence_wav: recordOptions failed: {e}")
+
+    # Start recording
+    try:
+        if hasattr(s, "recstart"):
+            s.recstart()
+        elif hasattr(s, "recStart"):
+            s.recStart()
+    except Exception as e:
+        dbg(f"save_sequence_wav: recstart failed: {e}")
+        try:
+            pat.stop()
+        except:
+            pass
+        raise
+
+    # Play the pattern during recording
+    try:
+        pat.play()
     except Exception:
         pass
 
-    # Prompt for rating
+    # Sleep for the requested duration
     try:
-        while True:
-            resp = input("Rate 0-5 (blank to skip): ").strip()
-            if resp == "":
-                return None
-            try:
-                val = int(resp)
-            except Exception:
-                print("Please enter an integer between 0 and 5, or blank to skip.")
-                continue
-            if 0 <= val <= 5:
-                return val
-            else:
-                print("Please enter an integer between 0 and 5, or blank to skip.")
+        _time.sleep(duration)
+    except:
+        pass
 
-    except EOFError:
-        return None
+    # Stop recording + playback
+    try:
+        if hasattr(s, "recstop"):
+            s.recstop()
+        elif hasattr(s, "recStop"):
+            s.recStop()
+    except Exception as e:
+        dbg(f"save_sequence_wav: failed to stop recording: {e}")
+
+    try:
+        pat.stop()
+    except:
+        pass
+
+    return filename

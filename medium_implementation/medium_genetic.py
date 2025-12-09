@@ -14,7 +14,7 @@ LOOP_BARS = 2
 STEPS_PER_BAR = 8
 
 # User-rating # per gen
-USER_SAMPLE_COUNT = 3
+USER_SAMPLE_COUNT = 1
 
 human_bonus_map = {}  # maps genome_id -> bonus float
 HUMAN_BONUS_WEIGHT = 200.0

@@ -18,6 +18,7 @@ let
     pyoPkg
     sounddevice
     midiutil
+    matplotlib
   ]);
 
   liblo28 = stdenv.mkDerivation rec {

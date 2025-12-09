@@ -24,7 +24,7 @@ import numpy as np
 from midiutil import MIDIFile
 from pyo import *
 
-from medium_synth import play_sequence_pyo, rate_sequence_cli
+from medium_synth import play_sequence_pyo, rate_sequence_cli, save_sequence_wav
 from medium_genetic import runEvolution, flatten, POPULATION_SIZE, MAX_GENERATIONS, MUTATION_RATE
 from medium_logging import dbg, error, set_debug
 
@@ -95,12 +95,24 @@ def main():
         playback_tempo=tempo,
         playback_rng=test_rng,
     )
-    # Play the top result using pyo GUI
+    # Save the top result to WAV (and then open GUI playback for listening)
     try:
         top_entry = res[0]
-        play_sequence_pyo(top_entry[1], tempo, rng=test_rng, use_pyo_gui=True)
+        top_notes = top_entry[1]
+        fname = f"final_{int(time.time())}.wav"
+        try:
+            save_sequence_wav(top_notes, tempo=tempo, filename=fname, duration=12.0, rng=test_rng)
+            print(f"Saved final WAV to {fname}")
+        except Exception as e:
+            error(f"final WAV save failed: {e}")
+
+        # Play the top result using pyo GUI for interactive listening (best-effort)
+        try:
+            play_sequence_pyo(top_notes, tempo, rng=test_rng, use_pyo_gui=True)
+        except Exception as e:
+            error(f"pyo GUI playback failed: {e}")
     except Exception as e:
-        error(f"pyo playback failed. {e}")
+        error(f"final playback/save failed: {e}")
 
 
 def buildScale(root, key):
