@@ -2,19 +2,20 @@
 
 import numpy as np
 import time as _time
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 from pyo import *
-from medium_genetic import flatten
+from medium_genetic import flatten, TEST_RNG
 from medium_logging import dbg
 import os
+import random
 
 
 def midi_to_freq(midi_note: int) -> float:
     """Convert MIDI note number to frequency in Hz."""
-    return 440.0 * (2 ** ((midi_note - 69) / 12.0))
+    return float(440.0 * (2 ** ((midi_note - 69) / 12.0)))
 
 
-def play_sequence_pyo(sequence, tempo: int = 60, rng: np.random.Generator = None, use_pyo_gui: bool = False) -> Optional[Tuple[object, object]]:
+def play_sequence_pyo(sequence, tempo: int = 60, rng: Optional[Union[int, np.random.Generator, random.Random]] = None, use_pyo_gui: bool = False) -> Optional[Tuple[object, object]]:
     """Play a sequence using pyo. Returns (server, pattern) in non-GUI mode so the caller can stop playback.
     If pyo is not available, returns None.
     """
@@ -23,8 +24,17 @@ def play_sequence_pyo(sequence, tempo: int = 60, rng: np.random.Generator = None
         dbg("Empty sequence; nothing to play.")
         return None
 
+    # If no rng provided, use the single project-wide seed so playback is
+    # deterministic by default.
     if rng is None:
-        rng = np.random.default_rng()
+        rng = TEST_RNG
+    if isinstance(rng, int):
+        rng = np.random.default_rng(rng)
+    elif isinstance(rng, random.Random):
+        # Create a NumPy Generator seeded from the Random instance for
+        # reproducibility across types.
+        seed = rng.getrandbits(64)
+        rng = np.random.default_rng(seed)
 
     durations = rng.choice([0.5, 0.75, 1, 2], size=len(flat)).tolist()
     intervals = rng.choice([0.25, 0.5, 1], size=len(flat)).tolist()
@@ -85,13 +95,20 @@ def play_sequence_pyo(sequence, tempo: int = 60, rng: np.random.Generator = None
     return s, pat
 
 
-def rate_sequence_cli(sequence, tempo: int = 60, rng: np.random.Generator = None) -> Optional[int]:
+def rate_sequence_cli(sequence, tempo: int = 60, rng: Optional[Union[int, np.random.Generator, random.Random]] = None) -> Optional[int]:
     """
     Play sequence without GUI, record while playing, let the user stop via Enter,
     then prompt for a 0-6 rating. If rating == 6, move the temp file to a saved super-like.
     """
+    # If no rng provided, use the single project-wide seed so playback is
+    # deterministic by default.
     if rng is None:
-        rng = np.random.default_rng()
+        rng = TEST_RNG
+    if isinstance(rng, int):
+        rng = np.random.default_rng(rng)
+    elif isinstance(rng, random.Random):
+        seed = rng.getrandbits(64)
+        rng = np.random.default_rng(seed)
 
     # Start playback
     try:
@@ -193,14 +210,21 @@ def rate_sequence_cli(sequence, tempo: int = 60, rng: np.random.Generator = None
 
 
 
-def save_sequence_wav(sequence, tempo: int = 60, filename: Optional[str] = None, duration: float = 12.0, rng: np.random.Generator = None):
+def save_sequence_wav(sequence, tempo: int = 60, filename: Optional[str] = None, duration: float = 12.0, rng: Optional[Union[int, np.random.Generator, random.Random]] = None):
     """
     Save a sequence to WAV using pyo, by playing and recording in real time.
     """
     if filename is None:
         filename = f"export_{int(_time.time())}.wav"
+    # If no rng provided, use the single project-wide seed so playback is
+    # deterministic by default.
     if rng is None:
-        rng = np.random.default_rng()
+        rng = TEST_RNG
+    if isinstance(rng, int):
+        rng = np.random.default_rng(rng)
+    elif isinstance(rng, random.Random):
+        seed = rng.getrandbits(64)
+        rng = np.random.default_rng(seed)
 
     # Start playback
     s_pat = play_sequence_pyo(sequence, tempo=tempo, rng=rng, use_pyo_gui=False)

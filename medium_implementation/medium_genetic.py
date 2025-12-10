@@ -9,8 +9,11 @@ from medium_logging import dbg
 # Genetic algorithm hyperparameters
 POPULATION_SIZE = 100
 MAX_GENERATIONS = 200
-MUTATION_RATE = 0.07
+MUTATION_RATE = 0.05
 MAX_FITNESS = 16000
+
+# Shared test RNG seed 
+TEST_RNG = 192
 
 # Lead loop size (bars × steps per bar)
 LOOP_BARS = 2
@@ -187,13 +190,38 @@ def runEvolution(
     playback_rng: Optional[object] = None,
 ) -> list:
     """Runs the genetic algorithm until MAX_FITNESS is reached.
-
-    This function always collects fitness statistics per generation and stores
-    an initial/final population snapshot in `pop_history`. It returns a tuple
-    (population, fitness_stats, pop_history).
     """
-    if rng is None:
-        rng = random
+    seed_int = None
+    if isinstance(rng, int):
+        seed_int = rng
+        rng = random.Random(rng)
+    elif isinstance(rng, random.Random):
+        pass
+    elif rng is None:
+        seed_int = TEST_RNG
+        rng = random.Random(TEST_RNG)
+    else:
+        raise TypeError(f"Unsupported rng type {type(rng)!r}. "
+                        "Provide an integer seed or a random.Random instance.")
+
+    # Ensure playback RNG uses the same seed/value by default
+    if playback_rng is None:
+        playback_rng = seed_int if seed_int is not None else rng
+
+        if isinstance(rng, random.Random):
+            try:
+                seed_int = rng.getrandbits(64)
+            except Exception:
+                seed_int = TEST_RNG
+        else:
+            seed_int = TEST_RNG
+    # Apply to the global random module
+    try:
+        random.seed(seed_int)
+    except Exception:
+        # If seeding fails for some reason, fall back silently but keep
+        # using the rng instance for module-local randomness.
+        pass
 
     population = generatePopulation(POPULATION_SIZE, scale)
 
@@ -290,6 +318,9 @@ def runEvolution(
                 from medium_synth import play_sequence_pyo
                 # Unpack the tuple to get just the genome notes
                 best_id, best_notes = population[0]
+                # Ensure playback uses the same seed as the rest of the run.
+                if playback_rng is None:
+                    playback_rng = seed_int if seed_int is not None else rng
                 play_sequence_pyo(best_notes, tempo=playback_tempo, rng=playback_rng, use_pyo_gui=True)
             except Exception as e:
                 print(f"Playback failed: {e}")

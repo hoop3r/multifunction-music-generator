@@ -15,8 +15,8 @@ def _ensure_plots_dir() -> str:
     return plots_dir
 
 
-def plot_history(fitness_stats: Dict[str, List[float]], title: str, filename: Optional[str] = None, show: bool = False) -> str:
-    """Plot min, max, and mean fitness over generations and save PNG."""
+def plot_history(fitness_stats: Dict[str, List[float]], title: str, filename: Optional[str] = None, show: bool = False, x_label: str = "Generation") -> str:
+    """Plot min, max, and mean fitness over generations/iterations and save PNG."""
     
     # Normalize arrays
     mins = np.asarray(fitness_stats.get("min", []), dtype=float)
@@ -38,7 +38,7 @@ def plot_history(fitness_stats: Dict[str, List[float]], title: str, filename: Op
         ax.plot(np.arange(len(means)), means, label="Mean")
 
     ax.legend()
-    ax.set_xlabel("Generation", fontweight="bold")
+    ax.set_xlabel(x_label, fontweight="bold")
     ax.set_ylabel("Fitness", fontweight="bold")
     ax.grid(axis="y")
     ax.set_title(title, fontweight="bold", fontsize=14)
@@ -61,8 +61,18 @@ def plot_history(fitness_stats: Dict[str, List[float]], title: str, filename: Op
     return out_path
 
 
-def plot_from_run(fitness_stats: Dict[str, List[float]], title: Optional[str] = None, filename: Optional[str] = None, show: bool = False) -> str:
-    if title is None:
-        title = "GA Fitness History"
+def plot_from_run(fitness_stats: Dict[str, List[float]], title: Optional[str] = None, filename: Optional[str] = None, show: bool = False, x_label: Optional[str] = None, algorithm: Optional[str] = None) -> str:
+    
+    if algorithm is None:
+        algorithm = 'ga'
 
-    return plot_history(fitness_stats, title=title, filename=filename, show=show)
+    if title is None:
+        if algorithm.lower().startswith('greedy'):
+            title = "Greedy Baseline (Min/Max/Mean)"
+        else:
+            title = "GA Fitness (Min/Max/Mean)"
+
+    if x_label is None:
+        x_label = "Iteration" if algorithm.lower().startswith('greedy') else "Generation"
+
+    return plot_history(fitness_stats, title=title, filename=filename, show=show, x_label=x_label)
