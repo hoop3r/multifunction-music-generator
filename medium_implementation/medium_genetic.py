@@ -1,12 +1,15 @@
 import random
+import copy
 from typing import List, Tuple, Optional, Union
-
 import numpy as np
+
+from medium_crowding import crowding
+from medium_logging import dbg
 
 # Genetic algorithm hyperparameters
 POPULATION_SIZE = 100
-MAX_GENERATIONS = 100
-MUTATION_RATE = 0.05
+MAX_GENERATIONS = 200
+MUTATION_RATE = 0.07
 MAX_FITNESS = 16000
 
 # Lead loop size (bars × steps per bar)
@@ -14,7 +17,7 @@ LOOP_BARS = 2
 STEPS_PER_BAR = 8
 
 # User-rating # per gen
-USER_SAMPLE_COUNT = 1
+USER_SAMPLE_COUNT = 0
 
 human_bonus_map = {}  # maps genome_id -> bonus float
 HUMAN_BONUS_WEIGHT = 200.0
@@ -27,11 +30,19 @@ def new_genome_id():
     return GLOBAL_GENOME_ID
 
 def flatten(arr: List[List[Optional[int]]]) -> list:
-    """Flatten a 2D list of lists into a 1D list."""
+    """Flatten a 2D list/array of lists into a 1D list.
+
+    This treats Python lists, tuples and numpy arrays as sequences to be
+    flattened. It avoids treating strings/bytes as sequences.
+    """
     out = []
     for i in arr:
-        if isinstance(i, list):
-            out.extend(i)
+        # treat common sequence types (list/tuple/numpy array) as iterable bars
+        if isinstance(i, (list, tuple)) or (hasattr(i, 'shape') and hasattr(i, 'tolist')):
+            try:
+                out.extend(list(i))
+            except Exception:
+                out.append(i)
         else:
             out.append(i)
     return out
@@ -104,7 +115,13 @@ def selectParents(population: list) -> Tuple[list, list]:
     for idx, genome in enumerate(population):
         gid, notes = genome
         bonus = human_bonus_map.get(gid, 0.0)
-        fitnesses.append(compute_fitness(notes, human_bonus=bonus))
+        fval = compute_fitness(notes, human_bonus=bonus)
+        # Defensive: ensure fitness is a scalar float
+        try:
+            fval = float(fval)
+        except Exception:
+            raise TypeError(f"Computed fitness for population index {idx} (gid={gid}) is not numeric: {fval!r}")
+        fitnesses.append(fval)
 
     # Ensure non-negative weights
     min_f = min(fitnesses)
@@ -169,7 +186,12 @@ def runEvolution(
     playback_tempo: int = 60,
     playback_rng: Optional[object] = None,
 ) -> list:
-    """ Runs genetic algorithm until a genome with the specified MAX_FITNESS score has been reached"""
+    """Runs the genetic algorithm until MAX_FITNESS is reached.
+
+    This function always collects fitness statistics per generation and stores
+    an initial/final population snapshot in `pop_history`. It returns a tuple
+    (population, fitness_stats, pop_history).
+    """
     if rng is None:
         rng = random
 
@@ -190,6 +212,22 @@ def runEvolution(
                 initial_ratings_map[idx] = human_bonus
                 gid, _ = population[idx]
                 human_bonus_map[gid] = human_bonus
+
+    # collect fitness statistics and population history
+    fitness_stats = {"min": [], "max": [], "mean": []}
+    pop_history = {"initial": copy.deepcopy(population)}
+
+    # Record initial fitness stats
+    initial_fitness_vals = [compute_fitness(g[1], human_bonus_map.get(g[0], 0.0)) for g in population]
+    if initial_fitness_vals:
+        fitness_stats["min"].append(float(min(initial_fitness_vals)))
+        fitness_stats["max"].append(float(max(initial_fitness_vals)))
+        fitness_stats["mean"].append(float(sum(initial_fitness_vals) / len(initial_fitness_vals)))
+    # debug logging for initial fitness
+    try:
+        dbg(f"[runEvolution] Initial fitness -> min={fitness_stats['min'][-1]:.2f}, max={fitness_stats['max'][-1]:.2f}, mean={fitness_stats['mean'][-1]:.2f}")
+    except Exception:
+        pass
 
     for gen in range(MAX_GENERATIONS):
         ratings_map = {}
@@ -231,6 +269,18 @@ def runEvolution(
         population.sort(key=lambda g: compute_fitness(g[1], human_bonus_map.get(g[0], 0.0)),
                         reverse=True)
 
+        # record stats for this generation
+        fitness_vals = [compute_fitness(g[1], human_bonus_map.get(g[0], 0.0)) for g in population]
+        if fitness_vals:
+            fitness_stats["min"].append(float(min(fitness_vals)))
+            fitness_stats["max"].append(float(max(fitness_vals)))
+            fitness_stats["mean"].append(float(sum(fitness_vals) / len(fitness_vals)))
+        # per-generation debug logging
+        try:
+            dbg(f"[runEvolution] Generation {gen} fitness -> min={fitness_stats['min'][-1]:.2f}, max={fitness_stats['max'][-1]:.2f}, mean={fitness_stats['mean'][-1]:.2f}")
+        except Exception:
+            pass
+
         # Early stopping using base fitness
         gid, notes = population[0]
         best_fitness = compute_fitness(notes, human_bonus_map.get(gid, 0.0))
@@ -245,36 +295,99 @@ def runEvolution(
                 print(f"Playback failed: {e}")
             break
 
-        nextGen = population[:2]  # elitism
+        # Use deterministic crowding during reproduction.
+        nextGen = population[:2]  # elitism (keep top 2)
 
-        while len(nextGen) < POPULATION_SIZE:
-            # selectParents returns items of the form (gid, notes)
+        # Precompute parent fitnesses by index
+        fitness_by_index = []
+        for idx, (gid, notes) in enumerate(population):
+            fitness_by_index.append(compute_fitness(notes, human_bonus_map.get(gid, 0.0)))
+
+        # Helper to find parent's index by gid
+        def _find_index_by_gid(pop, gid):
+            for i, item in enumerate(pop):
+                if isinstance(item, (tuple, list)) and len(item) >= 1 and item[0] == gid:
+                    return i
+            # fallback: random index
+            return random.randrange(len(pop))
+
+        replacements = {}
+        child_fitness = {}
+        child_id_map = {}
+
+        # Number of pairings to create (each pairing produces two children)
+        pairings = (POPULATION_SIZE - len(nextGen)) // 2
+        for _ in range(pairings):
             A, B = selectParents(population)
             idA, notesA = A
             idB, notesB = B
 
+            idxA = _find_index_by_gid(population, idA)
+            idxB = _find_index_by_gid(population, idB)
+
             # crossover expects plain note-lists
             childA, childB = crossoverFunction(notesA, notesB)
-
-            # childA/childB are returned as (new_id, notes) tuples by your crossoverFunction
             childA_id, childA_notes = childA
             childB_id, childB_notes = childB
 
-            # inheritance: average parent bonuses, decayed by 0.5
+            # inheritance: average parent bonuses
             parent_bonus = 0.5 * (human_bonus_map.get(idA, 0.0) + human_bonus_map.get(idB, 0.0))
             human_bonus_map[childA_id] = parent_bonus
             human_bonus_map[childB_id] = parent_bonus
 
-            # mutate the child's notes (mutateGenome expects a notes list)
+            # mutate the child's notes
             childA_notes = mutateGenome(childA_notes, mutationRate, scale)
             childB_notes = mutateGenome(childB_notes, mutationRate, scale)
 
-            # rewrap children as tuples for population
-            childA = (childA_id, childA_notes)
-            childB = (childB_id, childB_notes)
+            # compute child fitness
+            c1_fit = compute_fitness(childA_notes, human_bonus_map.get(childA_id, 0.0))
+            c2_fit = compute_fitness(childB_notes, human_bonus_map.get(childB_id, 0.0))
 
-            nextGen.extend([childA, childB])
+            # Record replacements keyed by the parent indices
+            replacements[(idxA, idxB)] = [childA_notes, childB_notes]
+            child_fitness[(idxA, idxB)] = [c1_fit, c2_fit]
+            child_id_map[(idxA, idxB)] = [childA_id, childB_id]
 
+        # Apply deterministic crowding to decide survivors for each parent pair
+        try:
+            new_replacements, new_child_fitness = crowding(population, fitness_by_index, replacements, child_fitness)
+        except Exception:
+            # Fallback: if crowding fails, just accept children directly
+            new_replacements = replacements
+            new_child_fitness = child_fitness
+
+        # Build next generation from survivors
+        for pair, survivors in new_replacements.items():
+            p1_idx, p2_idx = pair
+            parent1_id, parent1_gen = population[p1_idx]
+            parent2_id, parent2_gen = population[p2_idx]
+
+            cA_notes, cB_notes = replacements.get(pair, [None, None])
+            cA_id, cB_id = child_id_map.get(pair, [None, None])
+
+            # For each survivor slot, determine whether it's childA/childB or parent1/parent2
+            for slot_index in (0, 1):
+                surv_gen = survivors[slot_index]
+                if cA_notes is not None and surv_gen == cA_notes:
+                    sid = cA_id
+                    sgen = cA_notes
+                elif cB_notes is not None and surv_gen == cB_notes:
+                    sid = cB_id
+                    sgen = cB_notes
+                elif surv_gen == parent1_gen:
+                    sid = parent1_id
+                    sgen = parent1_gen
+                elif surv_gen == parent2_gen:
+                    sid = parent2_id
+                    sgen = parent2_gen
+                else:
+                    # unexpected: fall back to parent1
+                    sid = parent1_id
+                    sgen = parent1_gen
+
+                nextGen.append((sid, sgen))
+
+        # Ensure population size
         population = nextGen[:POPULATION_SIZE]
 
     population.sort(
@@ -282,4 +395,18 @@ def runEvolution(
         reverse=True
     )
 
-    return population
+    # Log final best fitness
+    try:
+        if population:
+            best_gid, best_notes = population[0]
+            best_fit = compute_fitness(best_notes, human_bonus_map.get(best_gid, 0.0))
+            dbg(f"[runEvolution] Final best fitness -> {best_fit:.2f} (gid={best_gid})")
+    except Exception:
+        pass
+
+    # Store final population snapshot
+    pop_history["final"] = copy.deepcopy(population)
+
+    # Always return the population along with collected fitness statistics and
+    # the population history dictionary.
+    return population, fitness_stats, pop_history

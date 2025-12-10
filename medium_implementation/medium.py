@@ -97,7 +97,36 @@ def main():
     )
     # Save the top result to WAV (and then open GUI playback for listening)
     try:
-        top_entry = res[0]
+        # runEvolution returns (population, fitness_stats, pop_history)
+        if isinstance(res, tuple):
+            # support (population, fitness_stats, pop_history) or older single-list return
+            if len(res) >= 3:
+                population, fitness_stats, pop_history = res[0], res[1], res[2]
+            elif len(res) == 2:
+                population, fitness_stats = res
+                pop_history = {"initial": None, "final": None}
+            else:
+                population = res[0]
+                fitness_stats = None
+                pop_history = {"initial": None, "final": None}
+        else:
+            population = res
+            fitness_stats = None
+            pop_history = {"initial": None, "final": None}
+
+        # plot fitness statz
+        if fitness_stats:
+            try:
+                from medium_plots import plot_from_run
+
+                out = plot_from_run(fitness_stats, title="GA Fitness History", filename=None, show=False)
+                dbg(f"Saved fitness history plot to {out}")
+                print(f"Saved fitness history plot to {out}")
+            except Exception as e:
+                # Log the plotting failure 
+                error(f"Failed to generate fitness plot: {e}")
+
+        top_entry = population[0]
         top_notes = top_entry[1]
         fname = f"final_{int(time.time())}.wav"
         try:
@@ -106,7 +135,7 @@ def main():
         except Exception as e:
             error(f"final WAV save failed: {e}")
 
-        # Play the top result using pyo GUI for interactive listening (best-effort)
+        # Play the top result using pyo GUI for interactive listening
         try:
             play_sequence_pyo(top_notes, tempo, rng=test_rng, use_pyo_gui=True)
         except Exception as e:
